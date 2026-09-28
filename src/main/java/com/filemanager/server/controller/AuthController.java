@@ -50,7 +50,7 @@ public class AuthController {
         return ResponseEntity.ok("로그아웃 성공! 안전하게 종료되었습니다.");
     }
 
-    // 사용자 인증 상태 확인 (새로 추가된 부분)
+    // 사용자 인증 상태 확인
     @GetMapping("/verify")
     public ResponseEntity<String> verifyToken(@RequestHeader(value = "Authorization", required = false) String token) {
         // 클라이언트가 보낸 헤더에 'dummy-token-123'이 포함되어 있는지 확인
