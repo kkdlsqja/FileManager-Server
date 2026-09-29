@@ -1,6 +1,7 @@
 package com.filemanager.server.controller;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -16,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -42,10 +44,7 @@ public class FileController {
         this.filenameOrganizer = filenameOrganizer;
     }
 
-    /**
-     * path가 비어 있거나 "/"이면 다섯 분류 폴더를 반환하고,
-     * 예를 들어 path="업무"이면 업무 폴더의 내용을 반환합니다.
-     */
+    /** path가 비어 있거나 "/"이면 바탕화면 내용을 반환합니다. */
     @GetMapping("/list")
     public ResponseEntity<?> getFileList(
             Authentication authentication,
@@ -71,50 +70,21 @@ public class FileController {
 
         try {
             String virtualPath = normalizeVirtualPath(path);
+            Path browseRoot = filenameOrganizer.getBrowseRootDirectory();
+            Path requestedDirectory = browseRoot;
 
-            // 최상위 화면에는 지정된 분류 폴더 다섯 개를 보여줍니다.
-            if (virtualPath.isEmpty()) {
-                filenameOrganizer.organizeRootFiles();
-                return ResponseEntity.ok(createCategoryList());
-            }
-
-            String[] parts = virtualPath.split("/");
-            String category = parts[0];
-
-            Path categoryRoot = filenameOrganizer
-                    .getDestinationDirectories()
-                    .get(category);
-
-            if (categoryRoot == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body("요청한 분류 폴더를 찾을 수 없습니다.");
-            }
-
-            StringBuilder nestedPath = new StringBuilder();
-
-            for (int i = 1; i < parts.length; i++) {
-                if (nestedPath.length() > 0) {
-                    nestedPath.append('/');
-                }
-                nestedPath.append(parts[i]);
-            }
-
-            Path requestedDirectory = categoryRoot;
-
-            if (nestedPath.length() > 0) {
-                Path relative = Paths.get(nestedPath.toString()).normalize();
-
+            if (!virtualPath.isEmpty()) {
+                Path relative = Paths.get(virtualPath).normalize();
                 if (relative.isAbsolute() || relative.startsWith("..")) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                            .body("분류 폴더 밖의 경로에는 접근할 수 없습니다.");
+                            .body("바탕화면 바깥의 경로에는 접근할 수 없습니다.");
                 }
-
-                requestedDirectory = categoryRoot.resolve(relative).normalize();
+                requestedDirectory = browseRoot.resolve(relative).normalize();
             }
 
-            if (!requestedDirectory.startsWith(categoryRoot)) {
+            if (!requestedDirectory.startsWith(browseRoot)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("분류 폴더 밖의 경로에는 접근할 수 없습니다.");
+                        .body("바탕화면 바깥의 경로에는 접근할 수 없습니다.");
             }
 
             if (!Files.exists(requestedDirectory)
@@ -124,17 +94,17 @@ public class FileController {
                         .body("요청한 폴더를 찾을 수 없습니다.");
             }
 
-            Path realCategoryRoot = categoryRoot.toRealPath();
+            Path realBrowseRoot = browseRoot.toRealPath();
             Path realRequestedDirectory = requestedDirectory.toRealPath();
 
-            if (!realRequestedDirectory.startsWith(realCategoryRoot)) {
+            if (!realRequestedDirectory.startsWith(realBrowseRoot)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("분류 폴더 밖의 경로에는 접근할 수 없습니다.");
+                        .body("바탕화면 바깥의 경로에는 접근할 수 없습니다.");
             }
 
             return ResponseEntity.ok(
                     createFileList(
-                            realCategoryRoot,
+                            realBrowseRoot,
                             realRequestedDirectory,
                             virtualPath
                     )
@@ -143,10 +113,47 @@ public class FileController {
         } catch (InvalidPathException e) {
             return ResponseEntity.badRequest()
                     .body("올바르지 않은 폴더 경로입니다.");
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("이 폴더에 접근할 권한이 없습니다.");
         } catch (IOException e) {
             return ResponseEntity
                     .status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("파일 목록을 처리하지 못했습니다: " + e.getMessage());
+        }
+    }
+
+    /** 바탕화면에서 선택한 파일을 바탕화면 안의 목적지 폴더로 이동합니다. */
+    @PostMapping("/move")
+    public ResponseEntity<String> moveFile(
+            Authentication authentication,
+            @RequestParam("pcId") Long pcId,
+            @RequestParam("sourcePath") String sourcePath,
+            @RequestParam("destinationPath") String destinationPath) {
+
+        var pc = pcDeviceRepository.findById(pcId);
+        if (pc.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("등록된 PC를 찾을 수 없습니다.");
+        }
+
+        Long userId = Long.valueOf(authentication.getName());
+        if (!userId.equals(pc.get().getUserId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("이 PC의 파일을 이동할 권한이 없습니다.");
+        }
+
+        try {
+            filenameOrganizer.moveFile(sourcePath, destinationPath);
+            return ResponseEntity.ok("파일을 이동했습니다.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("선택한 파일에 접근할 권한이 없습니다.");
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("파일 이동에 실패했습니다: " + e.getMessage());
         }
     }
 
@@ -216,32 +223,6 @@ public class FileController {
         return result;
     }
 
-    private List<Map<String, Object>> createCategoryList()
-            throws IOException {
-        List<Map<String, Object>> result = new ArrayList<>();
-
-        for (Map.Entry<String, Path> entry : filenameOrganizer
-                .getDestinationDirectories()
-                .entrySet()) {
-
-            Files.createDirectories(entry.getValue());
-
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("fileName", entry.getKey());
-            item.put("isDirectory", true);
-            item.put("fileSize", 0L);
-            item.put("path", entry.getKey());
-            item.put(
-                    "lastModified",
-                    Files.getLastModifiedTime(entry.getValue()).toMillis()
-            );
-
-            result.add(item);
-        }
-
-        return result;
-    }
-
     private List<Map<String, Object>> createFileList(
             Path allowedRoot,
             Path directory,
@@ -267,32 +248,36 @@ public class FileController {
         List<Map<String, Object>> fileList = new ArrayList<>();
 
         for (Path child : children) {
-            if (Files.isSymbolicLink(child)) {
-                continue;
+            try {
+                if (Files.isSymbolicLink(child)) {
+                    continue;
+                }
+
+                Path realChild = child.toRealPath();
+
+                if (!realChild.startsWith(allowedRoot)) {
+                    continue;
+                }
+
+                boolean isDirectory = Files.isDirectory(realChild);
+                String childVirtualPath = virtualDirectory
+                        + "/"
+                        + child.getFileName().toString();
+
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("fileName", child.getFileName().toString());
+                item.put("isDirectory", isDirectory);
+                item.put("fileSize", isDirectory ? 0L : Files.size(realChild));
+                item.put("path", childVirtualPath);
+                item.put(
+                        "lastModified",
+                        Files.getLastModifiedTime(realChild).toMillis()
+                );
+
+                fileList.add(item);
+            } catch (AccessDeniedException ignored) {
+                // 접근 제한 항목 하나 때문에 전체 목록이 실패하지 않게 건너뜁니다.
             }
-
-            Path realChild = child.toRealPath();
-
-            if (!realChild.startsWith(allowedRoot)) {
-                continue;
-            }
-
-            boolean isDirectory = Files.isDirectory(realChild);
-            String childVirtualPath = virtualDirectory
-                    + "/"
-                    + child.getFileName().toString();
-
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("fileName", child.getFileName().toString());
-            item.put("isDirectory", isDirectory);
-            item.put("fileSize", isDirectory ? 0L : Files.size(realChild));
-            item.put("path", childVirtualPath);
-            item.put(
-                    "lastModified",
-                    Files.getLastModifiedTime(realChild).toMillis()
-            );
-
-            fileList.add(item);
         }
 
         return fileList;

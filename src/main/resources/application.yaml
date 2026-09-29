@@ -12,6 +12,7 @@ spring:
 
 filemanager:
   pc-identifier: "folderhelper-computer-01"
+  browse-root-directory: "C:/Users/COMPUTER/Desktop"
   root-directory: "C:/Users/COMPUTER/Desktop/FolderHelperTest"
   destinations:
     school: "C:/Users/COMPUTER/Desktop/학교"

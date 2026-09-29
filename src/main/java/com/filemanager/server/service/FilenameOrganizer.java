@@ -46,6 +46,9 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
     @Value("${filemanager.root-directory}")
     private String configuredRootDirectory;
 
+    @Value("${filemanager.browse-root-directory:C:/Users/COMPUTER/Desktop}")
+    private String configuredBrowseRootDirectory;
+
     @Value("${filemanager.destinations.school}")
     private String configuredSchoolDirectory;
 
@@ -104,6 +107,21 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
     public Path getRootDirectory() throws IOException {
         initializeDirectories();
         return rootDirectory;
+    }
+
+    /** 모바일에서 탐색할 수 있는 PC 바탕화면의 최상위 경로입니다. */
+    public Path getBrowseRootDirectory() throws IOException {
+        Path browseRoot = Paths.get(configuredBrowseRootDirectory)
+                .toAbsolutePath()
+                .normalize();
+
+        if (!Files.exists(browseRoot) || !Files.isDirectory(browseRoot)) {
+            throw new IOException(
+                    "파일 탐색 경로가 없거나 폴더가 아닙니다: " + browseRoot
+            );
+        }
+
+        return browseRoot.toRealPath();
     }
 
     /**
@@ -172,6 +190,140 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
                 organizeFile(entry);
             }
         }
+    }
+
+    /** PC 바탕화면 안의 파일을 다른 바탕화면 폴더로 이동합니다. */
+    public void moveFile(String sourceVirtualPath, String destinationVirtualPath)
+            throws IOException {
+        Path browseRoot = getBrowseRootDirectory();
+        Path realSource = resolvePathUnderBrowseRoot(
+                sourceVirtualPath,
+                browseRoot,
+                false
+        );
+
+        if (!Files.isRegularFile(realSource)) {
+            throw new IllegalArgumentException("파일만 이동할 수 있습니다.");
+        }
+
+        Path realDestinationDirectory = resolvePathUnderBrowseRoot(
+                destinationVirtualPath,
+                browseRoot,
+                true
+        );
+
+        if (!Files.isDirectory(realDestinationDirectory)) {
+            throw new IllegalArgumentException("목적지로 폴더를 선택해 주세요.");
+        }
+
+        if (realSource.getParent().equals(realDestinationDirectory)) {
+            throw new IllegalArgumentException(
+                    "파일이 이미 선택한 폴더에 있습니다."
+            );
+        }
+
+        String fileName = realSource.getFileName().toString();
+        Path destination = createUniqueDestination(
+                realDestinationDirectory,
+                fileName
+        );
+
+        try {
+            Files.move(realSource, destination);
+        } catch (IOException exception) {
+            saveOperationLog(
+                    fileName,
+                    "모바일 이동",
+                    "FAILED",
+                    realSource,
+                    destination,
+                    exception.getMessage()
+            );
+            throw exception;
+        }
+
+        Path watchRoot = getRootDirectory().toRealPath();
+        boolean sentToFolderHelperTest =
+                realDestinationDirectory.equals(watchRoot);
+
+        saveOperationLog(
+                fileName,
+                "모바일 이동",
+                "SUCCESS",
+                realSource,
+                destination,
+                sentToFolderHelperTest
+                        ? "모바일에서 FolderHelperTest로 보냈습니다. 자동 분류를 시작합니다."
+                        : "모바일에서 바탕화면의 다른 폴더로 이동했습니다."
+        );
+
+        // 감시 폴더로 보내면 WatchService 이벤트를 기다리지 않고 바로 이름 분류합니다.
+        if (sentToFolderHelperTest) {
+            organizeFile(destination);
+        }
+    }
+
+    private Path resolvePathUnderBrowseRoot(
+            String virtualPath,
+            Path browseRoot,
+            boolean allowRoot) throws IOException {
+        String normalizedPath = virtualPath == null
+                ? ""
+                : virtualPath.trim().replace('\\', '/');
+
+        while (normalizedPath.startsWith("/")) {
+            normalizedPath = normalizedPath.substring(1);
+        }
+
+        if (normalizedPath.matches("^[A-Za-z]:.*")) {
+            throw new IllegalArgumentException(
+                    "바탕화면 기준 상대 경로를 보내야 합니다."
+            );
+        }
+
+        if (normalizedPath.isEmpty()) {
+            if (allowRoot) {
+                return browseRoot;
+            }
+            throw new IllegalArgumentException("파일 경로를 선택해 주세요.");
+        }
+
+        Path relativePath = Paths.get(normalizedPath).normalize();
+        if (relativePath.isAbsolute() || relativePath.startsWith("..")) {
+            throw new IllegalArgumentException(
+                    "바탕화면 바깥의 경로는 사용할 수 없습니다."
+            );
+        }
+
+        Path candidate = browseRoot.resolve(relativePath).normalize();
+        if (!candidate.startsWith(browseRoot)) {
+            throw new IllegalArgumentException(
+                    "바탕화면 바깥의 경로는 사용할 수 없습니다."
+            );
+        }
+
+        Path current = browseRoot;
+        for (Path segment : relativePath) {
+            current = current.resolve(segment);
+            if (Files.isSymbolicLink(current)) {
+                throw new IllegalArgumentException(
+                        "바로가기 또는 심볼릭 링크는 이동 경로로 사용할 수 없습니다."
+                );
+            }
+        }
+
+        if (!Files.exists(candidate)) {
+            throw new IllegalArgumentException("선택한 경로를 찾을 수 없습니다.");
+        }
+
+        Path realPath = candidate.toRealPath();
+        if (!realPath.startsWith(browseRoot)) {
+            throw new IllegalArgumentException(
+                    "바탕화면 바깥의 경로는 사용할 수 없습니다."
+            );
+        }
+
+        return realPath;
     }
 
     private void watchFolder() {
