@@ -24,11 +24,24 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
+import com.filemanager.server.domain.FileOperationLog;
+import com.filemanager.server.domain.FileOperationLogRepository;
+
 @Component
 public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
 
     private static final Logger logger =
             LoggerFactory.getLogger(FilenameOrganizer.class);
+
+    private final FileOperationLogRepository operationLogRepository;
+    private final ClassificationProperties classificationProperties;
+
+    public FilenameOrganizer(
+            FileOperationLogRepository operationLogRepository,
+            ClassificationProperties classificationProperties) {
+        this.operationLogRepository = operationLogRepository;
+        this.classificationProperties = classificationProperties;
+    }
 
     @Value("${filemanager.root-directory}")
     private String configuredRootDirectory;
@@ -255,33 +268,63 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
         }
 
         Path destination = createUniqueDestination(destinationDirectory, fileName);
-        Files.move(normalizedSource, destination);
+        try {
+            Files.move(normalizedSource, destination);
+            saveOperationLog(fileName, category, "SUCCESS", normalizedSource,
+                    destination, "파일을 분류 폴더로 이동했습니다.");
+            logger.info("파일 분류 완료: {} -> {}", normalizedSource, destination);
+        } catch (IOException exception) {
+            saveOperationLog(fileName, category, "FAILED", normalizedSource,
+                    destination, exception.getMessage());
+            throw exception;
+        }
+    }
 
-        logger.info("파일 분류 완료: {} -> {}", normalizedSource, destination);
+    private void saveOperationLog(
+            String fileName,
+            String category,
+            String status,
+            Path source,
+            Path destination,
+            String detail) {
+        try {
+            operationLogRepository.save(new FileOperationLog(
+                    fileName,
+                    category,
+                    status,
+                    source.toString(),
+                    destination == null ? null : destination.toString(),
+                    detail == null ? "처리 결과 상세 정보가 없습니다." : detail));
+        } catch (RuntimeException exception) {
+            logger.error("파일 처리 기록을 저장하지 못했습니다: {}", fileName, exception);
+        }
     }
 
     private String classifyByFileName(String fileName) {
         String name = fileName.toLowerCase();
 
-        if (containsAny(name, "과제", "강의", "수업", "학교", "시험", "졸업")) {
+        // 키워드가 여러 분류에 겹치면 이 순서(학교, 업무, 여행, 개인)로 먼저 일치한 분류를 사용합니다.
+        if (containsAny(name, classificationProperties.getKeywordsFor("school"))) {
             return "학교";
         }
-        if (containsAny(name, "업무", "회의", "보고서", "계약", "영수증", "회사")) {
+        if (containsAny(name, classificationProperties.getKeywordsFor("work"))) {
             return "업무";
         }
-        if (containsAny(name, "여행", "항공", "호텔", "숙소", "여행지")) {
+        if (containsAny(name, classificationProperties.getKeywordsFor("travel"))) {
             return "여행";
         }
-        if (containsAny(name, "가족", "개인", "취미")) {
+        if (containsAny(name, classificationProperties.getKeywordsFor("personal"))) {
             return "개인";
         }
 
         return "미분류";
     }
 
-    private boolean containsAny(String fileName, String... keywords) {
+    private boolean containsAny(String fileName, List<String> keywords) {
         for (String keyword : keywords) {
-            if (fileName.contains(keyword.toLowerCase())) {
+            if (keyword != null
+                    && !keyword.trim().isEmpty()
+                    && fileName.contains(keyword.trim().toLowerCase())) {
                 return true;
             }
         }

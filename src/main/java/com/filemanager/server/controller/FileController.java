@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -42,12 +43,18 @@ public class FileController {
      */
     @GetMapping("/list")
     public ResponseEntity<?> getFileList(
+            Authentication authentication,
             @RequestParam("pcId") Long pcId,
             @RequestParam(name = "path", required = false, defaultValue = "") String path) {
 
-        if (!pcDeviceRepository.findById(pcId).isPresent()) {
+        var pc = pcDeviceRepository.findById(pcId);
+        if (pc.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body("등록된 PC를 찾을 수 없습니다.");
+        }
+        if (!Long.valueOf(authentication.getName()).equals(pc.get().getUserId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("이 PC의 파일 목록을 볼 권한이 없습니다.");
         }
 
         try {
@@ -154,6 +161,7 @@ public class FileController {
             item.put("isDirectory", true);
             item.put("fileSize", 0L);
             item.put("path", entry.getKey());
+            item.put("lastModified", Files.getLastModifiedTime(entry.getValue()).toMillis());
             result.add(item);
         }
 
@@ -200,6 +208,7 @@ public class FileController {
             item.put("isDirectory", isDirectory);
             item.put("fileSize", isDirectory ? 0L : Files.size(realChild));
             item.put("path", childVirtualPath);
+            item.put("lastModified", Files.getLastModifiedTime(realChild).toMillis());
             fileList.add(item);
         }
 

@@ -18,3 +18,29 @@ filemanager:
     travel: "C:/Users/COMPUTER/Desktop/여행"
     personal: "C:/Users/COMPUTER/Desktop/개인"
     unclassified: "C:/Users/COMPUTER/Desktop/미분류"
+  classification:
+    keywords:
+      school:
+        - "과제"
+        - "강의"
+        - "수업"
+        - "학교"
+        - "시험"
+        - "졸업"
+      work:
+        - "업무"
+        - "회의"
+        - "보고서"
+        - "계약"
+        - "영수증"
+        - "회사"
+      travel:
+        - "여행"
+        - "항공"
+        - "호텔"
+        - "숙소"
+        - "여행지"
+      personal:
+        - "가족"
+        - "개인"
+        - "취미"
