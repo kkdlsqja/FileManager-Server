@@ -61,6 +61,9 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
     @Value("${filemanager.destinations.unclassified}")
     private String configuredUnclassifiedDirectory;
 
+    @Value("${filemanager.pc-identifier:folderhelper-computer-01}")
+    private String configuredPcIdentifier;
+
     private volatile Path rootDirectory;
     private volatile Map<String, Path> destinationDirectories;
     private volatile boolean running;
@@ -71,7 +74,13 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
     public void run(ApplicationArguments args) throws Exception {
         initializeDirectories();
 
+        // 기존 DB에서 PC 식별자가 비어 있는 기록을 이 PC의 기록으로 연결합니다.
+        operationLogRepository.assignMissingPcIdentifier(
+                configuredPcIdentifier
+        );
+
         watchService = FileSystems.getDefault().newWatchService();
+
         rootDirectory.register(
                 watchService,
                 StandardWatchEventKinds.ENTRY_CREATE,
@@ -79,12 +88,16 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
         );
 
         running = true;
-        watchThread = new Thread(this::watchFolder, "folderhelper-folder-watcher");
+        watchThread = new Thread(
+                this::watchFolder,
+                "folderhelper-folder-watcher"
+        );
         watchThread.setDaemon(true);
         watchThread.start();
 
-        // 서버 시작 전에 감시 폴더에 들어 있던 파일도 분류합니다.
+        // 서버 시작 전에 감시 폴더에 이미 있던 파일도 분류합니다.
         organizeRootFiles();
+
         logger.info("입력 폴더 감시 시작: {}", rootDirectory);
     }
 
@@ -93,8 +106,11 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
         return rootDirectory;
     }
 
-    /** 앱이 분류된 파일을 읽을 수 있도록 분류명과 실제 폴더 경로를 제공합니다. */
-    public Map<String, Path> getDestinationDirectories() throws IOException {
+    /**
+     * 앱에서 분류명과 실제 폴더 경로를 사용할 수 있도록 제공합니다.
+     */
+    public Map<String, Path> getDestinationDirectories()
+            throws IOException {
         initializeDirectories();
         return Collections.unmodifiableMap(destinationDirectories);
     }
@@ -107,6 +123,7 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
         Path input = Paths.get(configuredRootDirectory)
                 .toAbsolutePath()
                 .normalize();
+
         Files.createDirectories(input);
         rootDirectory = input.toRealPath();
 
@@ -139,7 +156,9 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
         destinationDirectories = resolved;
     }
 
-    /** 감시 폴더 바로 아래에 있는 기존 파일을 정리합니다. */
+    /**
+     * 감시 폴더 바로 아래에 있는 기존 파일을 정리합니다.
+     */
     public void organizeRootFiles() throws IOException {
         Path root = getRootDirectory();
         List<Path> entries = new ArrayList<>();
@@ -177,6 +196,7 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
                 }
 
                 Object context = event.context();
+
                 if (!(context instanceof Path)) {
                     continue;
                 }
@@ -220,8 +240,10 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
                 }
 
                 long currentSize = Files.size(file);
+
                 if (currentSize == previousSize) {
                     stableChecks++;
+
                     if (stableChecks >= 2) {
                         return true;
                     }
@@ -256,26 +278,55 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
 
         String fileName = normalizedSource.getFileName().toString();
         String category = classifyByFileName(fileName);
-        Path destinationDirectory = getDestinationDirectories().get(category);
+
+        Path destinationDirectory =
+                getDestinationDirectories().get(category);
 
         if (destinationDirectory == null) {
-            throw new IOException("분류 폴더 설정을 찾을 수 없습니다: " + category);
+            throw new IOException(
+                    "분류 폴더 설정을 찾을 수 없습니다: " + category
+            );
         }
 
         Path realDestinationDirectory = destinationDirectory.toRealPath();
+
         if (!realDestinationDirectory.equals(destinationDirectory)) {
-            throw new IOException("분류 폴더 경로가 변경되었습니다: " + destinationDirectory);
+            throw new IOException(
+                    "분류 폴더 경로가 변경되었습니다: "
+                            + destinationDirectory
+            );
         }
 
-        Path destination = createUniqueDestination(destinationDirectory, fileName);
+        Path destination =
+                createUniqueDestination(destinationDirectory, fileName);
+
         try {
             Files.move(normalizedSource, destination);
-            saveOperationLog(fileName, category, "SUCCESS", normalizedSource,
-                    destination, "파일을 분류 폴더로 이동했습니다.");
-            logger.info("파일 분류 완료: {} -> {}", normalizedSource, destination);
+
+            saveOperationLog(
+                    fileName,
+                    category,
+                    "SUCCESS",
+                    normalizedSource,
+                    destination,
+                    "파일을 분류 폴더로 이동했습니다."
+            );
+
+            logger.info(
+                    "파일 분류 완료: {} -> {}",
+                    normalizedSource,
+                    destination
+            );
         } catch (IOException exception) {
-            saveOperationLog(fileName, category, "FAILED", normalizedSource,
-                    destination, exception.getMessage());
+            saveOperationLog(
+                    fileName,
+                    category,
+                    "FAILED",
+                    normalizedSource,
+                    destination,
+                    exception.getMessage()
+            );
+
             throw exception;
         }
     }
@@ -287,33 +338,61 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
             Path source,
             Path destination,
             String detail) {
+
         try {
-            operationLogRepository.save(new FileOperationLog(
-                    fileName,
-                    category,
-                    status,
-                    source.toString(),
-                    destination == null ? null : destination.toString(),
-                    detail == null ? "처리 결과 상세 정보가 없습니다." : detail));
+            operationLogRepository.save(
+                    new FileOperationLog(
+                            configuredPcIdentifier,
+                            fileName,
+                            category,
+                            status,
+                            source.toString(),
+                            destination == null
+                                    ? null
+                                    : destination.toString(),
+                            detail == null
+                                    ? "처리 결과 상세 정보가 없습니다."
+                                    : detail
+                    )
+            );
         } catch (RuntimeException exception) {
-            logger.error("파일 처리 기록을 저장하지 못했습니다: {}", fileName, exception);
+            logger.error(
+                    "파일 처리 기록을 저장하지 못했습니다: {}",
+                    fileName,
+                    exception
+            );
         }
     }
 
     private String classifyByFileName(String fileName) {
         String name = fileName.toLowerCase();
 
-        // 키워드가 여러 분류에 겹치면 이 순서(학교, 업무, 여행, 개인)로 먼저 일치한 분류를 사용합니다.
-        if (containsAny(name, classificationProperties.getKeywordsFor("school"))) {
+        // 여러 분류의 키워드와 일치하면 학교, 업무, 여행, 개인 순서로 적용합니다.
+        if (containsAny(
+                name,
+                classificationProperties.getKeywordsFor("school")
+        )) {
             return "학교";
         }
-        if (containsAny(name, classificationProperties.getKeywordsFor("work"))) {
+
+        if (containsAny(
+                name,
+                classificationProperties.getKeywordsFor("work")
+        )) {
             return "업무";
         }
-        if (containsAny(name, classificationProperties.getKeywordsFor("travel"))) {
+
+        if (containsAny(
+                name,
+                classificationProperties.getKeywordsFor("travel")
+        )) {
             return "여행";
         }
-        if (containsAny(name, classificationProperties.getKeywordsFor("personal"))) {
+
+        if (containsAny(
+                name,
+                classificationProperties.getKeywordsFor("personal")
+        )) {
             return "개인";
         }
 
@@ -328,25 +407,39 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
                 return true;
             }
         }
+
         return false;
     }
 
-    private Path createUniqueDestination(Path directory, String fileName) {
+    private Path createUniqueDestination(
+            Path directory,
+            String fileName) {
+
         Path destination = directory.resolve(fileName);
+
         if (!Files.exists(destination)) {
             return destination;
         }
 
         int dotIndex = fileName.lastIndexOf('.');
-        String baseName = dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
-        String extension = dotIndex > 0 ? fileName.substring(dotIndex) : "";
+        String baseName = dotIndex > 0
+                ? fileName.substring(0, dotIndex)
+                : fileName;
+        String extension = dotIndex > 0
+                ? fileName.substring(dotIndex)
+                : "";
+
         int number = 1;
 
         while (true) {
-            destination = directory.resolve(baseName + " (" + number + ")" + extension);
+            destination = directory.resolve(
+                    baseName + " (" + number + ")" + extension
+            );
+
             if (!Files.exists(destination)) {
                 return destination;
             }
+
             number++;
         }
     }
@@ -358,6 +451,7 @@ public class FilenameOrganizer implements ApplicationRunner, DisposableBean {
         if (watchService != null) {
             watchService.close();
         }
+
         if (watchThread != null) {
             watchThread.interrupt();
         }

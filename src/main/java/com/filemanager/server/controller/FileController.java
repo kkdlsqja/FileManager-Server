@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.filemanager.server.domain.FileOperationLog;
+import com.filemanager.server.domain.FileOperationLogRepository;
 import com.filemanager.server.domain.PcDeviceRepository;
 import com.filemanager.server.service.FilenameOrganizer;
 
@@ -28,31 +30,41 @@ import com.filemanager.server.service.FilenameOrganizer;
 public class FileController {
 
     private final PcDeviceRepository pcDeviceRepository;
+    private final FileOperationLogRepository fileOperationLogRepository;
     private final FilenameOrganizer filenameOrganizer;
 
     public FileController(
             PcDeviceRepository pcDeviceRepository,
+            FileOperationLogRepository fileOperationLogRepository,
             FilenameOrganizer filenameOrganizer) {
         this.pcDeviceRepository = pcDeviceRepository;
+        this.fileOperationLogRepository = fileOperationLogRepository;
         this.filenameOrganizer = filenameOrganizer;
     }
 
     /**
      * path가 비어 있거나 "/"이면 다섯 분류 폴더를 반환하고,
-     * 예를 들어 path="업무"이면 C 드라이브의 업무 폴더 내용을 반환합니다.
+     * 예를 들어 path="업무"이면 업무 폴더의 내용을 반환합니다.
      */
     @GetMapping("/list")
     public ResponseEntity<?> getFileList(
             Authentication authentication,
             @RequestParam("pcId") Long pcId,
-            @RequestParam(name = "path", required = false, defaultValue = "") String path) {
+            @RequestParam(
+                    name = "path",
+                    required = false,
+                    defaultValue = ""
+            ) String path) {
 
         var pc = pcDeviceRepository.findById(pcId);
+
         if (pc.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body("등록된 PC를 찾을 수 없습니다.");
         }
-        if (!Long.valueOf(authentication.getName()).equals(pc.get().getUserId())) {
+
+        if (!Long.valueOf(authentication.getName())
+                .equals(pc.get().getUserId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("이 PC의 파일 목록을 볼 권한이 없습니다.");
         }
@@ -60,7 +72,7 @@ public class FileController {
         try {
             String virtualPath = normalizeVirtualPath(path);
 
-            // 휴대폰의 최상위 화면은 지정된 분류 폴더 다섯 개만 보여줍니다.
+            // 최상위 화면에는 지정된 분류 폴더 다섯 개를 보여줍니다.
             if (virtualPath.isEmpty()) {
                 filenameOrganizer.organizeRootFiles();
                 return ResponseEntity.ok(createCategoryList());
@@ -68,7 +80,10 @@ public class FileController {
 
             String[] parts = virtualPath.split("/");
             String category = parts[0];
-            Path categoryRoot = filenameOrganizer.getDestinationDirectories().get(category);
+
+            Path categoryRoot = filenameOrganizer
+                    .getDestinationDirectories()
+                    .get(category);
 
             if (categoryRoot == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -76,6 +91,7 @@ public class FileController {
             }
 
             StringBuilder nestedPath = new StringBuilder();
+
             for (int i = 1; i < parts.length; i++) {
                 if (nestedPath.length() > 0) {
                     nestedPath.append('/');
@@ -84,12 +100,15 @@ public class FileController {
             }
 
             Path requestedDirectory = categoryRoot;
+
             if (nestedPath.length() > 0) {
                 Path relative = Paths.get(nestedPath.toString()).normalize();
+
                 if (relative.isAbsolute() || relative.startsWith("..")) {
                     return ResponseEntity.status(HttpStatus.FORBIDDEN)
                             .body("분류 폴더 밖의 경로에는 접근할 수 없습니다.");
                 }
+
                 requestedDirectory = categoryRoot.resolve(relative).normalize();
             }
 
@@ -107,41 +126,89 @@ public class FileController {
 
             Path realCategoryRoot = categoryRoot.toRealPath();
             Path realRequestedDirectory = requestedDirectory.toRealPath();
+
             if (!realRequestedDirectory.startsWith(realCategoryRoot)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body("분류 폴더 밖의 경로에는 접근할 수 없습니다.");
             }
 
             return ResponseEntity.ok(
-                    createFileList(realCategoryRoot, realRequestedDirectory, virtualPath)
+                    createFileList(
+                            realCategoryRoot,
+                            realRequestedDirectory,
+                            virtualPath
+                    )
             );
 
         } catch (InvalidPathException e) {
             return ResponseEntity.badRequest()
                     .body("올바르지 않은 폴더 경로입니다.");
         } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+            return ResponseEntity
+                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("파일 목록을 처리하지 못했습니다: " + e.getMessage());
         }
     }
 
+    /**
+     * 요청한 PC의 최근 분류 기록 100개를 반환합니다.
+     * 로그인한 사용자가 해당 PC의 소유자인지도 확인합니다.
+     */
+    @GetMapping("/history")
+    public ResponseEntity<?> getFileHistory(
+            Authentication authentication,
+            @RequestParam("pcId") Long pcId) {
+
+        var pc = pcDeviceRepository.findById(pcId);
+
+        if (pc.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("등록된 PC를 찾을 수 없습니다.");
+        }
+
+        Long userId = Long.valueOf(authentication.getName());
+
+        if (!userId.equals(pc.get().getUserId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("이 PC의 분류 기록을 볼 권한이 없습니다.");
+        }
+
+        List<FileOperationLog> history =
+                fileOperationLogRepository
+                        .findTop100ByPcIdentifierOrderByOccurredAtDesc(
+                                pc.get().getPcIdentifier()
+                        );
+
+        return ResponseEntity.ok(history);
+    }
+
     private String normalizeVirtualPath(String path) {
-        String safePath = path == null ? "" : path.trim().replace('\\', '/');
+        String safePath = path == null
+                ? ""
+                : path.trim().replace('\\', '/');
 
         while (safePath.startsWith("/")) {
             safePath = safePath.substring(1);
         }
 
         if (safePath.matches("^[A-Za-z]:.*")) {
-            throw new InvalidPathException(safePath, "드라이브 경로는 허용되지 않습니다.");
+            throw new InvalidPathException(
+                    safePath,
+                    "드라이브 경로는 허용되지 않습니다."
+            );
         }
 
         Path normalized = Paths.get(safePath).normalize();
+
         if (normalized.isAbsolute() || normalized.startsWith("..")) {
-            throw new InvalidPathException(safePath, "상위 경로는 허용되지 않습니다.");
+            throw new InvalidPathException(
+                    safePath,
+                    "상위 경로는 허용되지 않습니다."
+            );
         }
 
         String result = normalized.toString().replace('\\', '/');
+
         if (".".equals(result)) {
             return "";
         }
@@ -149,11 +216,14 @@ public class FileController {
         return result;
     }
 
-    private List<Map<String, Object>> createCategoryList() throws IOException {
+    private List<Map<String, Object>> createCategoryList()
+            throws IOException {
         List<Map<String, Object>> result = new ArrayList<>();
 
         for (Map.Entry<String, Path> entry : filenameOrganizer
-                .getDestinationDirectories().entrySet()) {
+                .getDestinationDirectories()
+                .entrySet()) {
+
             Files.createDirectories(entry.getValue());
 
             Map<String, Object> item = new LinkedHashMap<>();
@@ -161,7 +231,11 @@ public class FileController {
             item.put("isDirectory", true);
             item.put("fileSize", 0L);
             item.put("path", entry.getKey());
-            item.put("lastModified", Files.getLastModifiedTime(entry.getValue()).toMillis());
+            item.put(
+                    "lastModified",
+                    Files.getLastModifiedTime(entry.getValue()).toMillis()
+            );
+
             result.add(item);
         }
 
@@ -174,13 +248,16 @@ public class FileController {
             String virtualDirectory) throws IOException {
 
         List<Path> children = new ArrayList<>();
+
         try (Stream<Path> entries = Files.list(directory)) {
             entries.forEach(children::add);
         }
 
         children.sort(
                 Comparator
-                        .comparing((Path child) -> !Files.isDirectory(child))
+                        .comparing(
+                                (Path child) -> !Files.isDirectory(child)
+                        )
                         .thenComparing(
                                 child -> child.getFileName().toString(),
                                 String.CASE_INSENSITIVE_ORDER
@@ -195,12 +272,14 @@ public class FileController {
             }
 
             Path realChild = child.toRealPath();
+
             if (!realChild.startsWith(allowedRoot)) {
                 continue;
             }
 
             boolean isDirectory = Files.isDirectory(realChild);
-            String childVirtualPath = virtualDirectory + "/"
+            String childVirtualPath = virtualDirectory
+                    + "/"
                     + child.getFileName().toString();
 
             Map<String, Object> item = new LinkedHashMap<>();
@@ -208,7 +287,11 @@ public class FileController {
             item.put("isDirectory", isDirectory);
             item.put("fileSize", isDirectory ? 0L : Files.size(realChild));
             item.put("path", childVirtualPath);
-            item.put("lastModified", Files.getLastModifiedTime(realChild).toMillis());
+            item.put(
+                    "lastModified",
+                    Files.getLastModifiedTime(realChild).toMillis()
+            );
+
             fileList.add(item);
         }
 

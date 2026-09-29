@@ -11,6 +11,7 @@ spring:
     show-sql: true
 
 filemanager:
+  pc-identifier: "folderhelper-computer-01"
   root-directory: "C:/Users/COMPUTER/Desktop/FolderHelperTest"
   destinations:
     school: "C:/Users/COMPUTER/Desktop/학교"
