@@ -12,3 +12,9 @@ spring:
 
 filemanager:
   root-directory: "C:/Users/COMPUTER/Desktop/FolderHelperTest"
+  destinations:
+    school: "C:/Users/COMPUTER/Desktop/학교"
+    work: "C:/Users/COMPUTER/Desktop/업무"
+    travel: "C:/Users/COMPUTER/Desktop/여행"
+    personal: "C:/Users/COMPUTER/Desktop/개인"
+    unclassified: "C:/Users/COMPUTER/Desktop/미분류"
