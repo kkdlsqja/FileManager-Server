@@ -12,14 +12,17 @@ spring:
 
 filemanager:
   pc-identifier: "folderhelper-computer-01"
-  browse-root-directory: "C:/Users/COMPUTER/Desktop"
-  root-directory: "C:/Users/COMPUTER/Desktop/FolderHelperTest"
+
+  browse-root-directory: "${FILEMANAGER_DESKTOP:${user.home}/Desktop}"
+  root-directory: "${FILEMANAGER_WATCH_FOLDER:${FILEMANAGER_DESKTOP:${user.home}/Desktop}/FolderHelperTest}"
+
   destinations:
-    school: "C:/Users/COMPUTER/Desktop/학교"
-    work: "C:/Users/COMPUTER/Desktop/업무"
-    travel: "C:/Users/COMPUTER/Desktop/여행"
-    personal: "C:/Users/COMPUTER/Desktop/개인"
-    unclassified: "C:/Users/COMPUTER/Desktop/미분류"
+    school: "${FILEMANAGER_SCHOOL_FOLDER:${FILEMANAGER_DESKTOP:${user.home}/Desktop}/학교}"
+    work: "${FILEMANAGER_WORK_FOLDER:${FILEMANAGER_DESKTOP:${user.home}/Desktop}/업무}"
+    travel: "${FILEMANAGER_TRAVEL_FOLDER:${FILEMANAGER_DESKTOP:${user.home}/Desktop}/여행}"
+    personal: "${FILEMANAGER_PERSONAL_FOLDER:${FILEMANAGER_DESKTOP:${user.home}/Desktop}/개인}"
+    unclassified: "${FILEMANAGER_UNCLASSIFIED_FOLDER:${FILEMANAGER_DESKTOP:${user.home}/Desktop}/미분류}"
+
   classification:
     keywords:
       school:
