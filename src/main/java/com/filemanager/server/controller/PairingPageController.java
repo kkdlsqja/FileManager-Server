@@ -7,9 +7,12 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import javax.imageio.ImageIO;
@@ -24,10 +27,6 @@ import com.google.zxing.EncodeHintType;
 import com.google.zxing.WriterException;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Base64;
 
 @RestController
 public class PairingPageController {
@@ -44,6 +43,7 @@ public class PairingPageController {
         List<String> addresses = findLocalIpv4Addresses();
 
         StringBuilder html = new StringBuilder();
+
         html.append("""
                 <!doctype html>
                 <html lang="ko">
@@ -54,40 +54,68 @@ public class PairingPageController {
                   <style>
                     * { box-sizing: border-box; }
                     body {
-                      margin: 0; padding: 28px 16px; background: #f4f6fa;
-                      color: #202637; font-family: Arial, sans-serif;
+                      margin: 0;
+                      padding: 28px 16px;
+                      background: #f4f6fa;
+                      color: #202637;
+                      font-family: Arial, sans-serif;
                     }
                     main {
-                      max-width: 560px; margin: 0 auto; padding: 28px;
-                      background: white; border-radius: 18px;
-                      box-shadow: 0 8px 28px #18243a18; text-align: center;
+                      max-width: 560px;
+                      margin: 0 auto;
+                      padding: 28px;
+                      background: white;
+                      border-radius: 18px;
+                      box-shadow: 0 8px 28px #18243a18;
+                      text-align: center;
                     }
                     h1 { margin: 0 0 8px; font-size: 25px; }
                     .lead { color: #667085; margin: 0 0 24px; }
                     .pc-card {
-                      padding: 20px 14px; margin: 16px 0;
-                      border: 1px solid #e4e7ec; border-radius: 14px;
+                      padding: 20px 14px;
+                      margin: 16px 0;
+                      border: 1px solid #e4e7ec;
+                      border-radius: 14px;
                     }
                     .qr {
-                      width: 250px; height: 250px; max-width: 100%;
-                      display: block; margin: 0 auto 14px;
+                      width: 250px;
+                      height: 250px;
+                      max-width: 100%;
+                      display: block;
+                      margin: 0 auto 14px;
                       image-rendering: pixelated;
                     }
                     .address {
-                      font-size: 18px; font-weight: 700; overflow-wrap: anywhere;
+                      font-size: 18px;
+                      font-weight: 700;
+                      overflow-wrap: anywhere;
                     }
-                    .hint { color: #667085; font-size: 14px; line-height: 1.5; }
+                    .hint {
+                      color: #667085;
+                      font-size: 14px;
+                      line-height: 1.5;
+                    }
                     button {
-                      border: 0; border-radius: 9px; padding: 10px 16px;
-                      color: white; background: #2864dc; font-size: 15px;
+                      border: 0;
+                      border-radius: 9px;
+                      padding: 10px 16px;
+                      color: white;
+                      background: #2864dc;
+                      font-size: 15px;
                     }
-                    .empty { padding: 18px; background: #fff4e5; border-radius: 12px; }
+                    .empty {
+                      padding: 18px;
+                      background: #fff4e5;
+                      border-radius: 12px;
+                    }
                   </style>
                 </head>
                 <body>
                 <main>
                   <h1>FolderHelper PC 연결</h1>
-                  <p class="lead">휴대폰과 이 PC를 같은 Wi-Fi에 연결한 뒤 QR을 스캔하세요.</p>
+                  <p class="lead">
+                    휴대폰과 이 PC를 같은 Wi-Fi에 연결한 뒤 QR을 스캔하세요.
+                  </p>
                 """);
 
         if (addresses.isEmpty()) {
@@ -100,23 +128,29 @@ public class PairingPageController {
         } else {
             for (String ip : addresses) {
                 String address = scheme + "://" + ip + ":" + serverPort + "/";
+
                 try {
                     String qrData = createQrDataUri(address);
+
                     html.append("<section class=\"pc-card\">");
                     html.append("<img class=\"qr\" alt=\"PC 연결 QR 코드\" src=\"");
                     html.append(qrData);
                     html.append("\">");
+
                     html.append("<div class=\"address\">PC IP: ");
                     html.append(escapeHtml(ip));
-                    html.append(":" ).append(serverPort);
+                    html.append(":").append(serverPort);
                     html.append("</div>");
+
                     html.append("<p class=\"hint\">서버 주소: ");
                     html.append(escapeHtml(address));
                     html.append("<br>QR을 스캔할 수 없으면 이 주소를 앱에 입력하세요.</p>");
+
                     html.append("<button type=\"button\" data-address=\"");
                     html.append(escapeHtml(address));
-                    html.append("\" onclick=\"navigator.clipboard.writeText(this.dataset.address).then(() => this.textContent='복사 완료')\">주소 복사</button>");
+                    html.append("\" onclick=\"copyAddress(this)\">주소 복사</button>");
                     html.append("</section>");
+
                 } catch (WriterException | IOException exception) {
                     html.append("<p class=\"empty\">QR 코드를 생성하지 못했습니다: ");
                     html.append(escapeHtml(exception.getMessage()));
@@ -131,9 +165,68 @@ public class PairingPageController {
                     Wi-Fi가 바뀌거나 IP가 변경되면 이 페이지를 새로고침하세요.
                   </p>
                 </main>
+
+                <script>
+                  function showCopyResult(button, message) {
+                    const originalText = "주소 복사";
+                    button.textContent = message;
+
+                    window.setTimeout(function () {
+                      button.textContent = originalText;
+                    }, 1800);
+                  }
+
+                  function copyWithFallback(address, button) {
+                    const textArea = document.createElement("textarea");
+                    textArea.value = address;
+                    textArea.setAttribute("readonly", "");
+                    textArea.style.position = "fixed";
+                    textArea.style.left = "-9999px";
+                    textArea.style.top = "0";
+                    textArea.style.fontSize = "16px";
+
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    textArea.setSelectionRange(0, textArea.value.length);
+
+                    let copied = false;
+
+                    try {
+                      copied = document.execCommand("copy");
+                    } catch (error) {
+                      copied = false;
+                    }
+
+                    textArea.remove();
+
+                    showCopyResult(
+                      button,
+                      copied ? "복사 완료" : "복사 실패"
+                    );
+                  }
+
+                  function copyAddress(button) {
+                    const address = button.dataset.address;
+
+                    if (navigator.clipboard && window.isSecureContext) {
+                      navigator.clipboard.writeText(address)
+                        .then(function () {
+                          showCopyResult(button, "복사 완료");
+                        })
+                        .catch(function () {
+                          copyWithFallback(address, button);
+                        });
+                      return;
+                    }
+
+                    copyWithFallback(address, button);
+                  }
+                </script>
                 </body>
                 </html>
                 """);
+
         return html.toString();
     }
 
@@ -206,6 +299,7 @@ public class PairingPageController {
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ImageIO.write(image, "png", output);
+
         return "data:image/png;base64,"
                 + Base64.getEncoder().encodeToString(output.toByteArray());
     }
@@ -219,5 +313,3 @@ public class PairingPageController {
                 .replace("'", "&#39;");
     }
 }
-
-
