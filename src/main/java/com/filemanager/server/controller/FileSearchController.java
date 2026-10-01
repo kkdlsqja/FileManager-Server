@@ -53,14 +53,12 @@ public class FileSearchController {
         }
 
         var pc = pcDeviceRepository.findById(pcId);
-
         if (pc.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body("등록된 PC를 찾을 수 없습니다.");
         }
 
         Long userId = Long.valueOf(authentication.getName());
-
         if (!userId.equals(pc.get().getUserId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("이 PC의 파일을 검색할 권한이 없습니다.");
@@ -70,8 +68,7 @@ public class FileSearchController {
             Path browseRoot = filenameOrganizer
                     .getBrowseRootDirectory()
                     .toRealPath();
-
-            String keyword = query.trim().toLowerCase(Locale.ROOT);
+            String keyword = normalizeForSearch(query);
             List<Map<String, Object>> results = new ArrayList<>();
 
             Files.walkFileTree(browseRoot, new SimpleFileVisitor<Path>() {
@@ -86,15 +83,10 @@ public class FileSearchController {
 
                     if (!directory.equals(browseRoot)
                             && directory.getFileName() != null
-                            && directory.getFileName().toString()
-                                    .toLowerCase(Locale.ROOT)
-                                    .contains(keyword)) {
-                        addResult(
-                                browseRoot,
-                                directory,
-                                attributes,
-                                results
-                        );
+                            && normalizeForSearch(
+                                    directory.getFileName().toString()
+                            ).contains(keyword)) {
+                        addResult(browseRoot, directory, attributes, results);
                     }
 
                     return results.size() >= MAX_RESULTS
@@ -110,15 +102,10 @@ public class FileSearchController {
                     if (!Files.isSymbolicLink(file)
                             && attributes.isRegularFile()
                             && file.getFileName() != null
-                            && file.getFileName().toString()
-                                    .toLowerCase(Locale.ROOT)
-                                    .contains(keyword)) {
-                        addResult(
-                                browseRoot,
-                                file,
-                                attributes,
-                                results
-                        );
+                            && normalizeForSearch(
+                                    file.getFileName().toString()
+                            ).contains(keyword)) {
+                        addResult(browseRoot, file, attributes, results);
                     }
 
                     return results.size() >= MAX_RESULTS
@@ -149,7 +136,6 @@ public class FileSearchController {
             );
 
             return ResponseEntity.ok(results);
-
         } catch (IOException exception) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("바탕화면 파일 검색에 실패했습니다.");
@@ -163,9 +149,7 @@ public class FileSearchController {
             List<Map<String, Object>> results) throws IOException {
 
         Path realPath = candidate.toRealPath();
-
-        if (!realPath.startsWith(browseRoot)
-                || realPath.equals(browseRoot)) {
+        if (!realPath.startsWith(browseRoot) || realPath.equals(browseRoot)) {
             return;
         }
 
@@ -180,7 +164,12 @@ public class FileSearchController {
         item.put("fileSize", attributes.isDirectory() ? 0L : attributes.size());
         item.put("path", relativePath);
         item.put("lastModified", attributes.lastModifiedTime().toMillis());
-
         results.add(item);
+    }
+
+    private String normalizeForSearch(String value) {
+        return value
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("\\s+", "");
     }
 }
